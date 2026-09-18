@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>TEXMO · Hostel Management</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f7fb;color:#172033}
+button,input,select,textarea{font:inherit}button{border:0;cursor:pointer}.hidden{display:none!important}
+.app{max-width:520px;margin:auto;min-height:100vh;background:#f7f9fc}.screen{min-height:100vh;padding:22px 16px 90px}
+.brand{text-align:center;padding:25px 0}.brand h1{margin:0;font-size:28px}.brand p{margin:7px 0;color:#6b7280}
+.card{background:#fff;border:1px solid #e7ebf1;border-radius:18px;padding:16px;margin-bottom:14px;box-shadow:0 5px 18px #1720330b}
+h2,h3{margin:0 0 12px}.muted{color:#6b7280;font-size:13px}.small{font-size:12px}
+input,select,textarea{width:100%;padding:13px;border:1px solid #dce2ea;border-radius:12px;background:#fff;outline:none;margin:6px 0 10px}
+input:focus,select:focus,textarea:focus{border-color:#5267ff}textarea{min-height:85px;resize:vertical}
+.btn{padding:12px 15px;border-radius:12px;font-weight:700;background:#172033;color:#fff}.btn.primary{background:#5267ff}.btn.green{background:#15966b}.btn.red{background:#d94b5b}.btn.light{background:#eef2ff;color:#3446c2}.btn.gray{background:#eef1f5;color:#263043}.btn.full{width:100%}.btn.sm{padding:9px 11px;font-size:12px}
+.row{display:flex;gap:9px;align-items:center}.row>*{flex:1}.wrap{flex-wrap:wrap}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(520px,100%);background:#fff;border-top:1px solid #e5e8ee;padding:8px;display:flex;z-index:10}.nav button{flex:1;background:none;color:#687184;font-size:11px;padding:6px 2px}.nav button.active{color:#5267ff;font-weight:800}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.top h2{margin:0}
+.stat{padding:14px;border-radius:15px;background:#f7f8ff}.stat b{font-size:23px;display:block}.badge{display:inline-block;padding:5px 8px;border-radius:99px;font-size:11px;font-weight:800;background:#edf1f6}.in{background:#dcf8ed;color:#08764f}.out{background:#ffe4e7;color:#b52f40}.pending{background:#fff1cf;color:#946600}.approved{background:#ddf5e8;color:#08734e}.rejected{background:#ffe3e6;color:#b72f3d}
+.item{padding:12px 0;border-bottom:1px solid #edf0f4}.item:last-child{border-bottom:0}.item h4{margin:0 0 5px}.empty{text-align:center;padding:25px;color:#8a93a2}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#172033;color:#fff;padding:12px 16px;border-radius:12px;z-index:30;font-size:13px;box-shadow:0 8px 25px #0003}
+.qr{width:180px;height:180px;margin:10px auto;display:block;border:8px solid #fff;box-shadow:0 3px 14px #0002}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}.tablewrap{overflow:auto}
+hr{border:0;border-top:1px solid #edf0f4;margin:15px 0}
+@media(min-width:521px){body{background:#dfe5ee}}
+</style>
+</head>
+<body>
+<div id="toast" class="toast hidden"></div>
+<div class="app" id="app"></div>
+
+<script>
+"use strict";
+
+/* =========================
+   TEXMO HOSTEL DATA LAYER
+   ========================= */
+const KEY="texmo_hostel_v1";
+const defaultDB={
+ employees:[], rooms:[], requests:[], movements:[], cabs:[], audit:[],
+ settings:{nextEmployee:1001,nextRequest:1,nextMovement:1}
+};
+let db=loadDB(), session=null, currentPage="home";
+
+function loadDB(){
+ try{return {...defaultDB,...JSON.parse(localStorage.getItem(KEY)||"{}")}}
+ catch(e){return structuredClone(defaultDB)}
+}
+function saveDB(){localStorage.setItem(KEY,JSON.stringify(db))}
+function id(prefix,n){return prefix+String(n).padStart(4,"0")}
+function now(){return new Date().toLocaleString("en-IN",{hour12:false})}
+function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+function toast(msg){const x=document.getElementById("toast");x.textContent=msg;x.classList.remove("hidden");setTimeout(()=>x.classList.add("hidden"),2200)}
+function audit(action,detail,user="HR"){
+ db.audit.unshift({id:"A"+Date.now(),time:now(),user,action,detail});saveDB()
+}
+function currentEmployee(){return db.employees.find(e=>e.id===session?.employeeId)}
+function employeeName(id){return db.employees.find(e=>e.id===id)?.name||id}
+
+/* =========================
+   AUTH
+   ========================= */
+function showLogin(){session=null;currentPage="home";render()}
+function loginHR(){
+ const u=document.getElementById("loginUser").value.trim(),p=document.getElementById("loginPass").value;
+ if(u==="hr"&&p==="hr@123"){session={role:"hr"};audit("HR Login","HR signed in","HR");render();return}
+ toast("Invalid HR login")
+}
+function loginEmployee(){
+ const id=document.getElementById("empLoginId").value.trim().toUpperCase();
+ const p=document.getElementById("empLoginPass").value;
+ const e=db.employees.find(x=>x.id===id&&x.password===p);
+ if(!e){toast("Invalid employee ID or password");return}
+ session={role:"employee",employeeId:e.id};audit("Employee Login",e.id,e.id);render()
+}
+function registerEmployee(){
+ const name=document.getElementById("rName").value.trim(), phone=document.getElementById("rPhone").value.trim();
+ const dept=document.getElementById("rDept").value.trim(), shift=document.getElementById("rShift").value;
+ const pass=document.getElementById("rPass").value;
+ if(!name||!phone||!dept||!pass){toast("Fill all required fields");return}
+ if(pass.length<4){toast("Password needs 4+ characters");return}
+ const eid=id("EMP",db.settings.nextEmployee++);
+ db.employees.push({id:eid,name,phone,dept,shift,password:pass,room:"",status:"OUT",joined:now(),active:true});
+ audit("Employee Registered",eid,eid);saveDB();
+ toast("Registered: "+eid);
+ document.getElementById("registerForm").reset();
+ showLoginPanel("employee")
+}
+function logout(){if(session)audit("Logout",session.role==="hr"?"HR":session.employeeId,session.role==="hr"?"HR":session.employeeId);session=null;render()}
+
+/* =========================
+   ROUTING/UI
+   ========================= */
+function render(){
+ const app=document.getElementById("app");
+ if(!session){app.innerHTML=loginView();return}
+ app.innerHTML=session.role==="hr"?hrView():employeeView();
+}
+function loginView(){
+ return `<div class="screen">
+ <div class="brand"><h1>🏠 TEXMO Hostel</h1><p>Mobile Hostel Management</p></div>
+ <div class="card">
+  <div class="row"><button class="btn primary" onclick="showLoginPanel('employee')">Employee</button><button class="btn gray" onclick="showLoginPanel('hr')">HR</button></div>
+  <div id="loginPanel">${employeeLoginPanel()}</div>
+ </div>
+ <div class="card"><h3>Employee Self Registration</h3><p class="muted">Only Employee accounts can be created here.</p>
+  <div id="registerFormWrap">${registerForm()}</div>
+ </div>
+ </div>`
+}
+function showLoginPanel(type){
+ const p=document.getElementById("loginPanel");if(p)p.innerHTML=type==="hr"?hrLoginPanel():employeeLoginPanel()
+}
+function employeeLoginPanel(){return `<h3>Employee Login</h3><input id="empLoginId" placeholder="Employee ID (EMP1001)"><input id="empLoginPass" type="password" placeholder="Password"><button class="btn primary full" onclick="loginEmployee()">Login</button>`}
+function hrLoginPanel(){return `<h3>HR Login</h3><input id="loginUser" placeholder="Username"><input id="loginPass" type="password" placeholder="Password"><button class="btn primary full" onclick="loginHR()">Login</button><p class="muted">Demo credentials: hr / hr@123</p>`}
+function registerForm(){return `<form id="registerForm" onsubmit="event.preventDefault();registerEmployee()">
+<input id="rName" placeholder="Full name *"><input id="rPhone" placeholder="Phone *" inputmode="tel"><input id="rDept" placeholder="Department *">
+<select id="rShift"><option value="">Select shift *</option><option>7:30 AM - 4:00 PM</option><option>4:00 PM - 12:30 AM</option><option>12:30 AM - 7:30 AM</option></select>
+<input id="rPass" type="password" placeholder="Create password *"><button class="btn green full">Create Employee Account</button></form>`}
+
+/* =========================
+   HR
+   ========================= */
+function hrView(){
+ const nav=`<div class="nav">${["home","employees","rooms","requests","movement","cabs","audit"].map((p,i)=>`<button class="${currentPage===p?"active":""}" onclick="go('${p}')">${["🏠","👥","🏠","📋","🚪","🚍","📜"][i]}<br>${p[0].toUpperCase()+p.slice(1)}</button>`).join("")}</div>`;
+ return `<div class="screen"><div class="top"><div><h2>TEXMO HR</h2><span class="muted">${now()}</span></div><button class="btn gray sm" onclick="logout()">Logout</button></div>${hrPage()}${nav}</div>`
+}
+function go(p){currentPage=p;render()}
+function hrPage(){
+ switch(currentPage){
+ case"employees":return employeesPage();case"rooms":return roomsPage();case"requests":return requestsPage();case"movement":return movementPage();case"cabs":return cabsPage();case"audit":return auditPage();default:return hrHome()
+ }
+}
+function downloadAll(){exportExcel("TEXMO_Hostel_All_Data",{
+ Employees:db.employees.map(e=>({...e,password:undefined})),
+ Rooms:db.rooms,Requests:db.requests,Movements:db.movements,Cabs:db.cabs,Audit:db.audit
+})}
+function hrHome(){
+ const inside=db.employees.filter(e=>e.status==="IN").length,rooms=db.rooms.length,req=db.requests.filter(r=>r.status==="Pending").length;
+ return `<div class="grid2"><div class="stat"><span class="muted">Employees</span><b>${db.employees.length}</b></div><div class="stat"><span class="muted">IN</span><b>${inside}</b></div><div class="stat"><span class="muted">Rooms</span><b>${rooms}</b></div><div class="stat"><span class="muted">Pending</span><b>${req}</b></div></div>
+ <div class="card"><h3>Quick Actions</h3><div class="grid2"><button class="btn primary" onclick="go('employees')">Employees</button><button class="btn light" onclick="go('rooms')">Rooms</button><button class="btn light" onclick="go('requests')">Requests</button><button class="btn light" onclick="go('movement')">Movement</button><button class="btn light" onclick="go('cabs')">Cabs</button><button class="btn green" onclick="downloadAll()">⬇ Download All Excel</button></div></div>
+ <div class="card"><h3>Recent Activity</h3>${db.audit.slice(0,5).map(a=>`<div class="item"><b>${esc(a.action)}</b><div class="muted">${esc(a.detail)} · ${esc(a.time)}</div></div>`).join("")||`<div class="empty">No activity</div>`}</div>`
+}
+function employeesPage(){
+ return `<div class="card"><div class="top"><h3>Employees</h3><button class="btn green sm" onclick="exportEmployees()">⬇ Excel</button></div>
+ <input placeholder="Search employee..." oninput="filterEmployees(this.value)"><div id="empList">${employeeRows(db.employees)}</div></div>`
+}
+function employeeRows(arr){return arr.map(e=>`<div class="item"><div class="row"><div><h4>${esc(e.name)}</h4><span class="muted">${e.id} · ${esc(e.dept)} · ${esc(e.shift)}</span></div><span class="badge ${e.status==="IN"?"in":"out"}">${e.status}</span></div><div class="muted">Room: ${esc(e.room||"Not allocated")} · ${esc(e.phone)}</div></div>`).join("")||`<div class="empty">No employees</div>`}
+function filterEmployees(q){const x=document.getElementById("empList");if(x)x.innerHTML=employeeRows(db.employees.filter(e=>(e.name+" "+e.id+" "+e.dept).toLowerCase().includes(q.toLowerCase())))}
+function exportEmployees(){exportExcel("TEXMO_Employees",{Employees:db.employees.map(e=>({...e,password:undefined}))})}
+
+/* Rooms */
+function roomsPage(){
+ const occ=db.employees.filter(e=>e.room);
+ return `<div class="card"><div class="top"><h3>Room Management</h3><button class="btn green sm" onclick="exportRooms()">⬇ Excel</button></div>
+ <input id="roomNo" placeholder="Room number (e.g. A-101)"><input id="roomCap" type="number" min="1" placeholder="Capacity"><button class="btn primary full" onclick="addRoom()">Add Room</button></div>
+ <div class="card">${db.rooms.map(r=>{const n=occ.filter(e=>e.room===r.number).length;return `<div class="item"><div class="row"><div><h4>Room ${esc(r.number)}</h4><span class="muted">${n}/${r.capacity} occupied</span></div><button class="btn red sm" onclick="deleteRoom('${r.number}')">Delete</button></div><select onchange="allocate('${r.number}',this.value)"><option value="">Allocate employee...</option>${db.employees.filter(e=>!e.room).map(e=>`<option value="${e.id}">${esc(e.name)} (${e.id})</option>`).join("")}</select><div>${occ.filter(e=>e.room===r.number).map(e=>`<span class="badge">${esc(e.name)} <button onclick="deallocate('${e.id}')">×</button></span>`).join(" ")||'<span class="muted">Empty</span>'}</div></div>`}).join("")||`<div class="empty">No rooms added</div>`}</div>`
+}
+function addRoom(){const n=document.getElementById("roomNo").value.trim(),c=+document.getElementById("roomCap").value;if(!n||!c){toast("Enter room and capacity");return}if(db.rooms.some(r=>r.number===n)){toast("Room exists");return}db.rooms.push({number:n,capacity:c,created:now()});audit("Room Added",n);saveDB();render()}
+function deleteRoom(n){if(db.employees.some(e=>e.room===n)){toast("Room occupied");return}db.rooms=db.rooms.filter(r=>r.number!==n);audit("Room Deleted",n);saveDB();render()}
+function allocate(room,eid){if(!eid)return;const r=db.rooms.find(x=>x.number===room),e=db.employees.find(x=>x.id===eid);if(db.employees.filter(x=>x.room===room).length>=r.capacity){toast("Room full");render();return}e.room=room;audit("Room Allocated",eid+" → "+room);saveDB();render()}
+function deallocate(eid){const e=db.employees.find(x=>x.id===eid);e.room="";audit("Room Deallocated",eid);saveDB();render()}
+function exportRooms(){exportExcel("TEXMO_Rooms",{Rooms:db.rooms,Occupancy:db.employees.map(e=>({employeeId:e.id,name:e.name,department:e.dept,room:e.room,status:e.status}))})}
+
+/* Requests */
+function requestsPage(){
+ return `<div class="card"><div class="top"><h3>Employee Requests</h3><button class="btn green sm" onclick="exportRequests()">⬇ Excel</button></div>${db.requests.map(r=>`<div class="item"><h4>${esc(r.type)} · ${r.id}</h4><div class="muted">${esc(employeeName(r.employeeId))} · ${esc(r.created)}</div><p>${esc(r.message)}</p><span class="badge ${r.status.toLowerCase()}">${r.status}</span>${r.status==="Pending"?`<div class="row" style="margin-top:9px"><button class="btn green" onclick="requestAction('${r.id}','Approved')">Approve</button><button class="btn red" onclick="requestAction('${r.id}','Rejected')">Reject</button></div>`:""}</div>`).join("")||`<div class="empty">No requests</div>`}</div>`
+}
+function requestAction(rid,status){const r=db.requests.find(x=>x.id===rid);r.status=status;r.actioned=now();r.actionedBy="HR";audit("Request "+status,rid);saveDB();render()}
+function exportRequests(){exportExcel("TEXMO_Requests",{Requests:db.requests})}
+
+/* Movement */
+function movementPage(){
+ return `<div class="card"><div class="top"><h3>IN / OUT Movement</h3><button class="btn green sm" onclick="exportMovements()">⬇ Excel</button></div>
+ <p class="muted">HR can record movement. Employee can also use their own dashboard.</p>
+ <select id="moveEmp"><option value="">Select employee</option>${db.employees.map(e=>`<option value="${e.id}">${esc(e.name)} (${e.id}) · ${e.status}</option>`).join("")}</select>
+ <div class="row"><button class="btn green" onclick="recordMovement('IN')">🟢 IN</button><button class="btn red" onclick="recordMovement('OUT')">🔴 OUT</button></div>
+ <hr>${db.movements.slice(0,50).map(m=>`<div class="item"><div class="row"><b>${esc(m.employeeId)}</b><span class="badge ${m.status==="IN"?"in":"out"}">${m.status}</span></div><div class="muted">${esc(m.time)} · ${esc(m.location||"Location unavailable")}</div></div>`).join("")||`<div class="empty">No movements</div>`}</div>`
+}
+function recordMovement(status,eid=document.getElementById("moveEmp")?.value){if(!eid){toast("Select employee");return}captureLocation(loc=>{const e=db.employees.find(x=>x.id===eid);e.status=status;const m={id:id("MOV",db.settings.nextMovement++),employeeId:eid,status,time:now(),location:loc};db.movements.unshift(m);audit("Movement "+status,eid+" · "+loc);saveDB();render()})}
+function captureLocation(cb){if(!navigator.geolocation){cb("Location unavailable");return}navigator.geolocation.getCurrentPosition(p=>cb(p.coords.latitude.toFixed(6)+", "+p.coords.longitude.toFixed(6)),()=>cb("Location permission denied/unavailable"),{enableHighAccuracy:true,timeout:8000,maximumAge:0})}
+function exportMovements(){exportExcel("TEXMO_Movements",{Movements:db.movements})}
+
+/* Cabs */
+function cabsPage(){
+ const depts=[...new Set(db.employees.map(e=>e.dept).filter(Boolean))];
+ return `<div class="card"><div class="top"><h3>Cab Management</h3><button class="btn green sm" onclick="exportCabs()">⬇ Excel</button></div>
+ <input id="cabNo" placeholder="Vehicle / Cab number"><input id="cabRoute" placeholder="Route"><input id="cabDriver" placeholder="Driver name"><button class="btn primary full" onclick="addCab()">Add Cab</button></div>
+ <div class="card"><h3>Vehicle-wise Employee Count</h3>${db.cabs.map(c=>{const count=db.employees.filter(e=>e.cab===c.id).length;return `<div class="item"><div class="row"><div><h4>${esc(c.id)}</h4><span class="muted">${esc(c.route)} · ${esc(c.driver)}</span></div><b>${count}</b></div><select onchange="assignCab('${c.id}',this.value)"><option value="">Assign employee...</option>${db.employees.filter(e=>!e.cab).map(e=>`<option value="${e.id}">${esc(e.name)} (${e.id})</option>`).join("")}</select></div>`}).join("")||`<div class="empty">No cabs added</div>`}</div>
+ <div class="card"><h3>Department-wise Cab Count</h3>${depts.map(d=>{const count=new Set(db.employees.filter(e=>e.dept===d&&e.cab).map(e=>e.cab)).size;return `<div class="item"><div class="row"><b>${esc(d)}</b><span class="badge">${count} cab(s)</span></div></div>`}).join("")||`<div class="empty">No department data</div>`}</div>`
+}
+function addCab(){const idv=document.getElementById("cabNo").value.trim(),route=document.getElementById("cabRoute").value.trim(),driver=document.getElementById("cabDriver").value.trim();if(!idv){toast("Enter vehicle number");return}if(db.cabs.some(c=>c.id===idv)){toast("Cab exists");return}db.cabs.push({id:idv,route,driver,created:now()});audit("Cab Added",idv);saveDB();render()}
+function assignCab(cab,eid){if(!eid)return;db.employees.find(e=>e.id===eid).cab=cab;audit("Cab Assigned",eid+" → "+cab);saveDB();render()}
+function exportCabs(){exportExcel("TEXMO_Cabs",{Cabs:db.cabs,EmployeeCabAssignment:db.employees.map(e=>({employeeId:e.id,name:e.name,department:e.dept,cab:e.cab||""}))})}
+
+/* Audit */
+function auditPage(){return `<div class="card"><div class="top"><h3>History / Audit</h3><button class="btn green sm" onclick="exportAudit()">⬇ Excel</button></div>${db.audit.slice(0,150).map(a=>`<div class="item"><b>${esc(a.action)}</b><div class="muted">${esc(a.detail)} · ${esc(a.user)} · ${esc(a.time)}</div></div>`).join("")||`<div class="empty">No audit records</div>`}</div>`}
+function exportAudit(){exportExcel("TEXMO_Audit",{Audit:db.audit})}
+
+/* =========================
+   EMPLOYEE
+   ========================= */
+function employeeView(){
+ const nav=`<div class="nav">${["home","profile","request","movement","qr","history"].map((p,i)=>`<button class="${currentPage===p?"active":""}" onclick="go('${p}')">${["🏠","👤","📋","🚪","▣","📜"][i]}<br>${p[0].toUpperCase()+p.slice(1)}</button>`).join("")}</div>`;
+ return `<div class="screen"><div class="top"><div><h2>Hello, ${esc(currentEmployee()?.name||"Employee")} 👋</h2><span class="muted">${esc(currentEmployee()?.id||"")}</span></div><button class="btn gray sm" onclick="logout()">Logout</button></div>${empPage()}${nav}</div>`
+}
+function empPage(){
+ switch(currentPage){case"profile":return profilePage();case"request":return requestCreatePage();case"movement":return empMovementPage();case"qr":return qrPage();case"history":return empHistoryPage();default:return empHome()}
+}
+function empHome(){
+ const e=currentEmployee();return `<div class="grid2"><div class="stat"><span class="muted">Status</span><b>${e.status==="IN"?"🟢":"🔴"} ${e.status}</b></div><div class="stat"><span class="muted">Room</span><b>${esc(e.room||"-")}</b></div></div>
+ <div class="card"><h3>My Details</h3><div class="item"><b>Department</b><div class="muted">${esc(e.dept)}</div></div><div class="item"><b>Shift</b><div class="muted">${esc(e.shift)}</div></div><div class="item"><b>Cab</b><div class="muted">${esc(e.cab||"Not assigned")}</div></div></div>
+ <div class="card"><button class="btn green full" onclick="recordMovement('IN',e.id)">🟢 Mark IN + Location</button><br><br><button class="btn red full" onclick="recordMovement('OUT',e.id)">🔴 Mark OUT + Location</button></div>`
+}
+function profilePage(){const e=currentEmployee();return `<div class="card"><h3>Employee Profile</h3><div class="item"><b>Employee ID</b><div>${e.id}</div></div><div class="item"><b>Name</b><div>${esc(e.name)}</div></div><div class="item"><b>Phone</b><div>${esc(e.phone)}</div></div><div class="item"><b>Department</b><div>${esc(e.dept)}</div></div><div class="item"><b>Shift</b><div>${esc(e.shift)}</div></div><div class="item"><b>Room</b><div>${esc(e.room||"Not allocated")}</div></div><div class="item"><b>Cab</b><div>${esc(e.cab||"Not assigned")}</div></div></div>`}
+function requestCreatePage(){return `<div class="card"><h3>New Request</h3><select id="reqType"><option>Room Request</option><option>Leave Request</option><option>Cab Request</option><option>General Request</option></select><textarea id="reqMsg" placeholder="Write your request..."></textarea><button class="btn primary full" onclick="submitRequest()">Submit Request</button></div><div class="card"><h3>My Requests</h3>${db.requests.filter(r=>r.employeeId===session.employeeId).map(r=>`<div class="item"><b>${esc(r.type)}</b><span class="badge ${r.status.toLowerCase()}">${r.status}</span><div class="muted">${esc(r.message)} · ${esc(r.created)}</div></div>`).join("")||`<div class="empty">No requests</div>`}</div>`}
+function submitRequest(){const type=document.getElementById("reqType").value,msg=document.getElementById("reqMsg").value.trim();if(!msg){toast("Write your request");return}const rid=id("REQ",db.settings.nextRequest++);db.requests.unshift({id:rid,employeeId:session.employeeId,type,message:msg,status:"Pending",created:now(),actioned:""});audit("Request Created",rid,session.employeeId);saveDB();render();toast("Request submitted")}
+function empMovementPage(){return `<div class="card"><h3>My Movement</h3><p class="muted">GPS is requested only when you tap IN or OUT. Browser permission is required.</p><div class="row"><button class="btn green" onclick="recordMovement('IN',session.employeeId)">🟢 IN</button><button class="btn red" onclick="recordMovement('OUT',session.employeeId)">🔴 OUT</button></div></div><div class="card"><h3>Recent</h3>${db.movements.filter(m=>m.employeeId===session.employeeId).slice(0,20).map(m=>`<div class="item"><span class="badge ${m.status==="IN"?"in":"out"}">${m.status}</span><div class="muted">${m.time} · ${esc(m.location)}</div></div>`).join("")||`<div class="empty">No movement history</div>`}</div>`}
+function qrPage(){const e=currentEmployee();const data=encodeURIComponent(JSON.stringify({employeeId:e.id,name:e.name,department:e.dept}));return `<div class="card" style="text-align:center"><h3>Employee QR ID</h3><p class="muted">Show this QR for identification.</p><img class="qr" alt="Employee QR" src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${data}"><h3>${esc(e.id)}</h3><div class="muted">${esc(e.name)} · ${esc(e.dept)}</div></div>`}
+function empHistoryPage(){return `<div class="card"><div class="top"><h3>My History</h3><button class="btn green sm" onclick="exportMyData()">⬇ Excel</button></div>${db.audit.filter(a=>a.user===session.employeeId).slice(0,100).map(a=>`<div class="item"><b>${esc(a.action)}</b><div class="muted">${esc(a.detail)} · ${esc(a.time)}</div></div>`).join("")||`<div class="empty">No history</div>`}</div>`}
+function exportMyData(){const idv=session.employeeId;exportExcel("TEXMO_"+idv,{Profile:db.employees.filter(e=>e.id===idv).map(e=>({...e,password:undefined})),Requests:db.requests.filter(r=>r.employeeId===idv),Movements:db.movements.filter(m=>m.employeeId===idv),History:db.audit.filter(a=>a.user===idv)})}
+
+/* =========================
+   EXCEL EXPORT
+   =========================
+   Generates a real .xlsx workbook using SheetJS loaded on demand.
+   ========================= */
+async function exportExcel(filename,sheets){
+ try{
+  if(!window.XLSX){
+   await loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js");
+  }
+  const wb=XLSX.utils.book_new();
+  for(const [name,rows] of Object.entries(sheets)){
+   const clean=(rows||[]).map(r=>{const x={};Object.entries(r||{}).forEach(([k,v])=>{if(v!==undefined)x[k]=v});return x});
+   const ws=XLSX.utils.json_to_sheet(clean.length?clean:[{}]);
+   XLSX.utils.book_append_sheet(wb,ws,String(name).slice(0,31));
+  }
+  XLSX.writeFile(wb,filename+".xlsx");toast("Excel downloaded");
+ }catch(e){console.error(e);toast("Excel export failed. Check internet connection.")}
+}
+function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement("script");s.src=src;s.onload=resolve;s.onerror=reject;document.head.appendChild(s)})}
+
+/* Do not persist login session. Refresh always returns to login. */
+window.addEventListener("load",()=>{session=null;currentPage="home";render()});
+window.addEventListener("beforeunload",()=>{session=null});
+render();
+</script>
+</body>
+</html>
